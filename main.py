@@ -237,6 +237,124 @@ def interact( env: PacmanEnv, pacman: Player , ghosts: Player ):
     return game_continue , info1 , info2 , level_change , eat_all_beans
 
 
+def choose_max_round( env: PacmanEnv , player: Player , another_player: Player ):
+    '''
+    获取ai或播放器用户的操作
+
+    env: 游戏逻辑维护的唯一局面
+    玩家0和玩家1的类型: 1 为 AI, 2 为网页播放器。
+    '''
+    ai_info = receive_ai_info()
+
+    while ai_info["player"] != -1 and ai_info["player"] != player.id:
+        ai_info = receive_ai_info()
+    # 判定交互对象状态
+    # 如果交互对象异常则退出
+    if ai_info["player"] == -1: 
+        # judger 监听列表中的某个 AI 超时或发生错误 -> 终止游戏，返回错误信息
+        return_dict = env.render()
+        error_info = json.loads(ai_info["content"])
+        error_type = error_info['error']
+        error_player = error_info['player']
+        return_dict["StopReason"] = f"Unexpected behavior of player {error_player}, judger returned error type {ERROR_MAP[error_type]}."
+
+        # 回放文件写入结束信息
+        replay_file.write(json.dumps(return_dict, ensure_ascii=False)+"\n")
+
+        send_watch_info(json.dumps(return_dict, ensure_ascii=False)+'\n')
+
+        if player.type == Type.PLAYER.value:
+            send_to_judger(
+                json.dumps(return_dict, ensure_ascii=False).encode("utf-8"), player.id
+            )
+
+        if another_player.type == Type.PLAYER.value:
+            send_to_judger(
+                json.dumps(return_dict, ensure_ascii=False).encode("utf-8"), another_player.id
+            )
+
+        end_list = ["OK", "OK"]
+        error_id = json.loads(ai_info["content"])["player"]
+        end_list[error_id] = ERROR_MAP[
+            json.loads(ai_info["content"])["error"]
+        ]
+        end_error_score = [0, 0]
+        end_error_score[error_id] = -ERROR_SCORE
+        end_error_score[1-error_id] = NORMAL_SCORE
+
+        pacmanscore = env.get_pacman_score()
+        ghostscore = env.get_ghosts_score()
+        end_info = {}
+        if players[0].role == Role.PACMAN.value:
+            end_info = {
+                "0": pacmanscore + end_error_score[0],
+                "1": ghostscore + end_error_score[1],
+            }
+        else:
+            end_info = {
+                "0": ghostscore + end_error_score[0],
+                "1": pacmanscore + end_error_score[1],
+            }
+        send_game_end_info(json.dumps(end_info), json.dumps(end_list))
+        replay_file.close()
+        time.sleep(0.5)
+        exit(0)
+    else:
+        try:
+            # 获取关卡轮数信息
+            # TODO
+            max_round_max = int(ai_info["content"])
+            MAX_ROUND[env._level] = ROUND[max_round_max]
+            return MAX_ROUND[env._level]
+        except:
+            error = traceback.format_exc()
+            return_dict = env.render()
+            return_dict["StopReason"] = (
+                f"{error}"
+            )
+            # 回放文件写入结束信息
+            replay_file.write(json.dumps(return_dict, ensure_ascii=False)+"\n")
+
+            send_watch_info(json.dumps(return_dict, ensure_ascii=False)+'\n')
+
+            if player.type == Type.PLAYER.value:
+                send_to_judger(
+                    json.dumps(return_dict, ensure_ascii=False).encode("utf-8"), player.id
+                )
+
+            if another_player.type == Type.PLAYER.value:
+                send_to_judger(
+                    json.dumps(return_dict, ensure_ascii=False).encode("utf-8"),
+                    another_player.id,
+                )
+
+            end_state = ["OK", "OK"]
+            end_state[player.id] = "IA"
+            end_error_score = [0,0]
+            end_error_score[player.id] = -ERROR_SCORE
+            end_error_score[1-player.id] = NORMAL_SCORE
+
+            pacmanscore = env.get_pacman_score()
+            ghostscore = env.get_ghosts_score()
+            end_info = {}
+            if players[0].role == Role.PACMAN.value:
+                end_info = {
+                    "0": pacmanscore + end_error_score[0],
+                    "1": ghostscore + end_error_score[1],
+                }
+            else:
+                end_info = {
+                    "0": ghostscore + end_error_score[0],
+                    "1": pacmanscore + end_error_score[1],
+                }
+
+            send_game_end_info(
+                json.dumps(end_info, ensure_ascii=False), json.dumps(end_state)
+            )
+            replay_file.close()
+            time.sleep(0.5)
+            exit(0)
+
 if __name__ == "__main__":
     import traceback
     
@@ -299,12 +417,15 @@ if __name__ == "__main__":
 
         # 第一回合发送座位信息
         state = 1
+        send_round_config(MAX_PLAYER_TIME, MAX_LENGTH)
         send_round_info(
             state,
-            [],
+            [0],
             [0,1],
             ["0"+'\n',"1"+'\n'],
         )
+
+        choose_max_round(env,players[0],players[1])
 
         game_continue = True
         level_change = False
